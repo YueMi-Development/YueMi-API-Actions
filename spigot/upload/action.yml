@@ -1,0 +1,59 @@
+name: "Spigot API - Upload File"
+description: "Upload a file for a Spigot version to api.yuemi.org and S3"
+inputs:
+  api-key:
+    description: "YueMi API Key (VERSION_UPDATE_KEY)"
+    required: true
+  version-id:
+    description: "Assigned version ID obtained from spigot/notify"
+    required: true
+  file-path:
+    description: "Path to the local file to upload"
+    required: true
+  filename:
+    description: "Target filename in storage (defaults to basename of file-path)"
+    required: false
+    default: ""
+  mime-type:
+    description: "Content / MIME type of the file"
+    required: false
+    default: "application/java-archive"
+  sync-metadata:
+    description: "Whether to notify the API to sync metadata after upload"
+    required: false
+    default: "true"
+  api-url:
+    description: "Base URL of the YueMi API"
+    required: false
+    default: "https://api.yuemi.org"
+outputs:
+  file-id:
+    description: "Assigned file ID from API"
+    value: ${{ steps.upload.outputs.file-id }}
+  upload-url:
+    description: "S3 signed upload URL"
+    value: ${{ steps.upload.outputs.upload-url }}
+  upload-response:
+    description: "Signed upload URL response body"
+    value: ${{ steps.upload.outputs.upload-response }}
+  sync-response:
+    description: "Metadata sync response body"
+    value: ${{ steps.upload.outputs.sync-response }}
+runs:
+  using: "composite"
+  steps:
+    - name: Upload Spigot File
+      id: upload
+      shell: bash
+      env:
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_API_URL: ${{ inputs.api-url }}
+        INPUT_FILE_PATH: ${{ inputs.file-path }}
+        INPUT_FILENAME: ${{ inputs.filename }}
+        INPUT_MIME_TYPE: ${{ inputs.mime-type }}
+        INPUT_SYNC_METADATA: ${{ inputs.sync-metadata }}
+        INPUT_UPLOAD_SIGNED_URL_ENDPOINT: ${{ inputs.api-url }}/api/v1/private/spigot/versions/${{ inputs.version-id }}/files/upload-signed-url
+        INPUT_SYNC_METADATA_ENDPOINT: ${{ inputs.api-url }}/api/v1/private/spigot/versions/${{ inputs.version-id }}/files/{file_id}/sync-metadata
+      run: |
+        bash "${{ github.action_path }}/../../shared/scripts/upload_file.sh"
+

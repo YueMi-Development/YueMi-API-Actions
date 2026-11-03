@@ -1,0 +1,46 @@
+name: "Kitsune API - Notify Version"
+description: "Register a Kitsune version with api.yuemi.org"
+inputs:
+  api-key:
+    description: "YueMi API Key"
+    required: true
+  version:
+    description: "Release tag or version (e.g. v1.0.0)"
+    required: true
+  category:
+    description: "Category of the Kitsune release (e.g. panel)"
+    required: false
+    default: "panel"
+  is-latest:
+    description: "Whether this version is the latest release (true/false)"
+    required: false
+    default: "false"
+  api-url:
+    description: "Base URL of the YueMi API"
+    required: false
+    default: "https://api.yuemi.org"
+outputs:
+  response:
+    description: "Full API JSON response"
+    value: ${{ steps.notify.outputs.response }}
+  category:
+    description: "Category registered"
+    value: ${{ steps.notify.outputs.category }}
+  version:
+    description: "Version tag registered"
+    value: ${{ steps.notify.outputs.version }}
+runs:
+  using: "composite"
+  steps:
+    - name: Notify Kitsune Version
+      id: notify
+      shell: bash
+      env:
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_CATEGORY: ${{ inputs.category }}
+        INPUT_IS_LATEST: ${{ inputs.is-latest }}
+        INPUT_API_URL: ${{ inputs.api-url }}
+      run: |
+        bash "${{ github.action_path }}/../../shared/scripts/notify_kitsune.sh"
+
