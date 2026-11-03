@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install -r .github/scripts/requirements.txt
+
+      - name: Validate action.yml
+        run: python .github/scripts/validate_action.py
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "${INPUT_VERSION}" ]; then
+            VERSION="${INPUT_VERSION#v}"
+          else
+            VERSION="${REF_NAME#v}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Update CHANGELOG.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          VERSION="${VERSION#v}"
+          FULL_TAG="v${VERSION}"
+          DATE=$(date -u +%Y-%m-%d)
+
+          # Collect changes since the previous full version tag, if any
+          PREV_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v "^${FULL_TAG}$" | head -n1 || true)
+          if [ -n "${PREV_TAG}" ]; then
+            CHANGES=$(git log --pretty=format:'- %s' "${PREV_TAG}..HEAD")
+          else
+            CHANGES=$(git log --pretty=format:'- %s' --max-count=20)
+          fi
+
+          # Ensure CHANGELOG.md exists with a header
+          if [ ! -f CHANGELOG.md ]; then
+            echo "# Changelog" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "All notable changes to this project will be documented in this file." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+
+          # Prepend new release entry
+          {
+            echo "## [${FULL_TAG}] - ${DATE}"
+            echo ""
+            echo "${CHANGES:-"- Release ${FULL_TAG}"}"
+            echo ""
+            echo ""
+          } | cat - CHANGELOG.md > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+
+      - name: Commit and push CHANGELOG.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          VERSION="${VERSION#v}"
+          FULL_TAG="v${VERSION}"
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No CHANGELOG.md changes to commit"
+          else
+            git commit -m "docs: update CHANGELOG.md for ${FULL_TAG}"
+            git push origin main
+          fi
+
+      - name: Create release branch and tags
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Strip leading 'v' if present
+          VERSION="${VERSION#v}"
+
+          # Create full version tag (e.g. v1.0.0)
+          FULL_TAG="v${VERSION}"
+          # Create major version tag (e.g. v1)
+          MAJOR_TAG="v${VERSION%%.*}"
+          # Create archive/release branch (e.g. release/v1.0.0)
+          BRANCH="release/v${VERSION}"
+
+          echo "Releasing ${FULL_TAG}, updating ${MAJOR_TAG}, and creating ${BRANCH}"
+
+          # Delete existing tags/branches locally if they exist
+          git tag -d "${FULL_TAG}" 2>/dev/null || true
+          git tag -d "${MAJOR_TAG}" 2>/dev/null || true
+          git branch -D "${BRANCH}" 2>/dev/null || true
+
+          # Create archive branch and push it
+          git checkout -b "${BRANCH}"
+          git push origin "${BRANCH}" --force
+
+          # Return to the original branch
+          git checkout -
+
+          # Create tags pointing to current commit
+          git tag -a "${FULL_TAG}" -m "Release ${FULL_TAG}"
+          git tag -fa "${MAJOR_TAG}" -m "Release ${FULL_TAG} (major version)"
+
+          # Push tags (force so re-releases overwrite existing tags)
+          git push origin "${FULL_TAG}" --force
+          git push origin "${MAJOR_TAG}" --force
+
+      - name: Generate release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          VERSION="${VERSION#v}"
+          python .github/scripts/generate_release_notes.py --version "${VERSION}" --output RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          VERSION="${VERSION#v}"
+          FULL_TAG="v${VERSION}"
+
+          # Delete existing release if it already exists
+          gh release delete "${FULL_TAG}" --yes 2>/dev/null || true
+
+          # Create a new release using our generated notes
+          gh release create "${FULL_TAG}" \
+            --title "Release ${FULL_TAG}" \
+            --notes-file RELEASE_NOTES.md \
+            --target main
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          VERSION="${VERSION#v}"
+          echo "Released v${VERSION} and v${VERSION%%.*}, created release/v${VERSION}"
